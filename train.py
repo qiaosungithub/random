@@ -250,10 +250,12 @@ def half_sample_step(params, sample_idx, model, rng_init, images, start=0.5):
     sample_idx: each random sampled image corrresponds to a seed
     """
     rng_sample = random.fold_in(rng_init, sample_idx)  # fold in sample_idx
-    images = generate_from_noisy(params, model, rng_sample, images, start=start)
+    samples = generate_from_noisy(params, model, rng_sample, images, start=start)
+    samples_all = lax.all_gather(samples, axis_name="batch")  # each device has a copy
     images_all = lax.all_gather(images, axis_name="batch")  # each device has a copy
+    samples_all = samples_all.reshape(-1, *samples_all.shape[2:])
     images_all = images_all.reshape(-1, *images_all.shape[2:])
-    return images_all
+    return samples_all, images_all # ground truth
     
 
 @functools.partial(jax.pmap, axis_name="x")
@@ -464,7 +466,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
             # state, metrics, vis = p_train_step(state, batch)
             # train_metrics.update(metrics)
 
-            images = p_sample_step(
+            images, gt = p_sample_step(
                 params={"params": state.params, "batch_stats": {}},
                 sample_idx=vis_sample_idx,
                 images=batch["image"],
@@ -474,7 +476,11 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
 
             if n_batch == 0: # visualize the first batch
                 vis = make_grid_visualization(images)
-                logger.log_image(0, {"vis_train": vis[0]})
+                logger.log_image(0, {"vis": vis[0]})
+
+                # visualize ground truth
+                vis = make_grid_visualization(gt)
+                logger.log_image(0, {"gt": vis[0]})
 
             images = float_to_uint8(images)
             samples_all.append(images)
