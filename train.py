@@ -331,6 +331,8 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
         wandb.config.update({"ka": ka})
     logger = GoodLogger(use_wandb=config.wandb, workdir=workdir)
 
+    rank = jax.process_index()
+
     rng = random.key(config.training.seed)
     global_batch_size = training_config.batch_size
     log_for_0("config.batch_size: {}".format(global_batch_size))
@@ -469,12 +471,13 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
             )
             images = images[0]  # images have been all gathered
             jax.random.normal(random.key(0), ()).block_until_ready()
-            images = float_to_uint8(images)
-            samples_all.append(images)
 
             if n_batch == 0: # visualize the first batch
                 vis = make_grid_visualization(images)
                 logger.log_image(0, {"vis_train": vis[0]})
+
+            images = float_to_uint8(images)
+            samples_all.append(images)
 
 
             # if epoch == epoch_offset and n_batch == 0:
@@ -529,6 +532,8 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
     mu, sigma = fid_util.compute_jax_fid(samples_all, inception_net)
     fid_score = fid_util.compute_fid(mu, stats_ref["mu"], sigma, stats_ref["sigma"])
     log_for_0(f' w/ ema: FID at {samples_all.shape[0]} samples: {fid_score}')
+    if config.wandb and rank == 0:
+        wandb.log({"FID": fid_score})
 
     # Wait until computations are done before exiting
     jax.random.normal(jax.random.key(0), ()).block_until_ready()
