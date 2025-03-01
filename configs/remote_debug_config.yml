@@ -1,0 +1,11 @@
+training:
+    num_epochs: 4000
+    # wandb: False # use this to disable wandb
+model:
+    dropout: 0.13
+fid:
+    fid_per_epoch: 100
+dataset:
+    num_workers: 64 # NOTE: On V2, if you don't use num_workers=64, sometimes the code will exit unexpectedly
+
+# load_from: # load from a specific checkpoint
