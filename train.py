@@ -31,7 +31,7 @@ import models.models_ddpm as models_ddpm
 from models.models_ddpm import generate, edm_ema_scales_schedules, generate_from_noisy
 
 from utils.info_util import print_params
-from utils.vis_util import make_grid_visualization, visualize_cifar_batch
+from utils.vis_util import make_grid_visualization, visualize_cifar_batch, float_to_uint8
 from utils.ckpt_util import restore_checkpoint, restore_pretrained, save_checkpoint
 import utils.fid_util as fid_util
 import utils.sample_util as sample_util
@@ -469,6 +469,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
             )
             images = images[0]  # images have been all gathered
             jax.random.normal(random.key(0), ()).block_until_ready()
+            images = float_to_uint8(images)
             samples_all.append(images)
 
             if n_batch == 0: # visualize the first batch
