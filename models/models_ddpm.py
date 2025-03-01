@@ -118,6 +118,57 @@ def generate(params, model, rng, n_sample):
     images = outputs[0]
     return images
 
+# move this out from model for JAX compilation
+def generate_from_noisy(params, model, rng, images, start=0.5):
+    """
+    Generate samples from the model
+    images: clean images
+    """
+
+    # prepare schedule
+    num_steps = model.n_T
+    # step_indices = jnp.arange(num_steps, dtype=model.dtype)
+    # t_steps = jnp.linspace(1e-3, 1.0, num_steps + 1, dtype=model.dtype)
+    t_steps = jnp.linspace(start, 1.0, num_steps + 1, dtype=model.dtype)
+
+    只能用一次, 别传进去 = jax.random.split(rng, 2)
+    只能用一次啊, 别传进去 = jax.random.split(别传进去, 2)
+
+    noise = jax.random.normal(只能用一次, images.shape, dtype=model.dtype)
+    B = images.shape[0]
+    t_batch = start * jnp.ones((B, ), dtype=model.dtype)
+    x_i = batch_mul(images, t_batch) + batch_mul(noise, 1 - t_batch)
+
+    # # initialize noise
+    # x_shape = (n_sample, model.image_size, model.image_size, model.out_channels)
+    # rng_used, rng = jax.random.split(rng, 2)
+    # latents = jax.random.normal(
+    #     rng_used, x_shape, dtype=model.dtype
+    # )  # x_T ~ N(0, 1), sample initial noise
+
+    # x_i = latents
+
+    def step_fn(i, inputs):
+        x_i, rng = inputs
+        rng_this_step = jax.random.fold_in(rng, i)
+        rng_z, rng_dropout = jax.random.split(rng_this_step, 2)
+        x_i, _ = model.apply(
+            params,  # which is {'params': state.params, 'batch_stats': state.batch_stats},
+            x_i,
+            rng_z,
+            i,
+            t_steps,
+            # rngs={'dropout': rng_dropout},  # we don't do dropout in eval
+            rngs={},
+            method=model.sample_one_step,
+            mutable=["batch_stats"],
+        )
+        outputs = (x_i, rng)
+        return outputs
+
+    outputs = jax.lax.fori_loop(0, num_steps, step_fn, (x_i, 只能用一次啊))
+    images = outputs[0]
+    return images
 
 class SimDDPM(nn.Module):
     """Simple DDPM."""

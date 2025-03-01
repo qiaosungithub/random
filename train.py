@@ -28,7 +28,7 @@ import os
 import input_pipeline
 from input_pipeline import prepare_batch_data
 import models.models_ddpm as models_ddpm
-from models.models_ddpm import generate, edm_ema_scales_schedules
+from models.models_ddpm import generate, edm_ema_scales_schedules, generate_from_noisy
 
 from utils.info_util import print_params
 from utils.vis_util import make_grid_visualization, visualize_cifar_batch
@@ -68,7 +68,7 @@ def initialized(key, image_size, model):
     def init(*args):
         return model.init(*args)
 
-    logging.info("Initializing params...")
+    log_for_0("Initializing params...")
     variables = init(
         {"params": key, "gen": key, "dropout": key},
         jnp.ones(input_shape, model.dtype),
@@ -76,7 +76,7 @@ def initialized(key, image_size, model):
     )
     if "batch_stats" not in variables:
         variables["batch_stats"] = {}
-    logging.info("Initializing params done.")
+    log_for_0("Initializing params done.")
     return variables["params"], variables["batch_stats"]
 
 
@@ -243,6 +243,18 @@ def sample_step(params, sample_idx, model, rng_init, device_batch_size):
     images_all = images_all.reshape(-1, *images_all.shape[2:])
     return images_all
 
+def half_sample_step(params, sample_idx, model, rng_init, images, start=0.5):
+    """
+    Generate samples from the train state.
+
+    sample_idx: each random sampled image corrresponds to a seed
+    """
+    rng_sample = random.fold_in(rng_init, sample_idx)  # fold in sample_idx
+    images = generate_from_noisy(params, model, rng_sample, images, start=start)
+    images_all = lax.all_gather(images, axis_name="batch")  # each device has a copy
+    images_all = images_all.reshape(-1, *images_all.shape[2:])
+    return images_all
+    
 
 @functools.partial(jax.pmap, axis_name="x")
 def cross_replica_mean(x):
@@ -312,12 +324,12 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
     sanity_check(config)
     log_for_0(config)
     training_config = config.training
-    if jax.process_index() == 0 and config.training.wandb:
-        wandb.init(project="fm_linen" if not config.just_evaluate else "fm_linen_eval", dir=workdir)
+    if jax.process_index() == 0 and config.wandb:
+        wandb.init(project="sqa_random", dir=workdir, tags=["half_fid"])
         wandb.config.update(config.to_dict())
         ka = re.search(r"kmh-tpuvm-v[234]-(\d+)(-preemptible)?-(\d+)", workdir).group()
         wandb.config.update({"ka": ka})
-    logger = GoodLogger(use_wandb=config.training.wandb, workdir=workdir)
+    logger = GoodLogger(use_wandb=config.wandb, workdir=workdir)
 
     rng = random.key(config.training.seed)
     global_batch_size = training_config.batch_size
@@ -381,109 +393,136 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
     ema_scales_fn = functools.partial(
         edm_ema_scales_schedules, steps_per_epoch=steps_per_epoch, config=config
     )
-    p_train_step = jax.pmap(
-        functools.partial(
-            train_step,
-            rng_init=rng,
-            learning_rate_fn=learning_rate_fn,
-            ema_scales_fn=ema_scales_fn,
-        ),
-        axis_name="batch",
-    )
+    # p_train_step = jax.pmap(
+    #     functools.partial(
+    #         train_step,
+    #         rng_init=rng,
+    #         learning_rate_fn=learning_rate_fn,
+    #         ema_scales_fn=ema_scales_fn,
+    #     ),
+    #     axis_name="batch",
+    # )
     p_sample_step = jax.pmap(
         functools.partial(
-            sample_step,
+            half_sample_step,
             model=model,
             rng_init=rng,
-            device_batch_size=config.fid.device_batch_size,
+            start=config.start,
         ),
         axis_name="batch",
     )
     vis_sample_idx = jax.process_index() * jax.local_device_count() + jnp.arange(jax.local_device_count())  # for visualization
-    logging.info(f"fixed_sample_idx: {vis_sample_idx}")
+    log_for_0(f"fixed_sample_idx: {vis_sample_idx}")
 
     # compile p_sample_step
-    logging.info("Compiling p_sample_step...")
+    log_for_0("Compiling p_sample_step...")
+    B = config.training.batch_size
     timer = Timer()
     lowered = p_sample_step.lower(
         params={"params": state.params, "batch_stats": {}},
         sample_idx=vis_sample_idx,
+        images=jnp.zeros((B, 32, 32, 3), jnp.float32),
     )
     p_sample_step = lowered.compile()
-    logging.info("p_sample_step compiled in {}s".format(timer.elapse_with_reset()))
+    log_for_0("p_sample_step compiled in {}s".format(timer.elapse_with_reset()))
 
     # prepare for FID evaluation
     if config.fid.on_use:
-        fid_evaluator = get_fid_evaluater(config, p_sample_step, logger)
-        # handle just_evaluate
-        if config.just_evaluate:
-            log_for_0("Sampling for images ...")
-            vis = run_p_sample_step(p_sample_step, state, vis_sample_idx, ema=False)
-            vis = make_grid_visualization(vis)
-            logger.log_image(1, {"vis_sample": vis[0]})
-            fid_score_ema = fid_evaluator(state, ema_only=True)
-            return state
+        # fid_evaluator = get_fid_evaluater(config, p_sample_step, logger)
+        inception_net = fid_util.build_jax_inception()
+        stats_ref = fid_util.get_reference(config.fid.cache_ref, inception_net)
+        # # handle just_evaluate
+        # if config.just_evaluate:
+            # log_for_0("Sampling for images ...")
+            # vis = run_p_sample_step(p_sample_step, state, vis_sample_idx, ema=False)
+            # vis = make_grid_visualization(vis)
+            # logger.log_image(1, {"vis_sample": vis[0]})
+            # fid_score_ema = fid_evaluator(state, ema_only=True)
+            # return state
 
-    logging.info("Initial compilation, this might take some minutes...")
+    log_for_0("Initial compilation, this might take some minutes...")
 
     ######################################################################
     #                           Training Loop                            #
     ######################################################################
     timer.reset()
+    samples_all = []
     for epoch in range(epoch_offset, training_config.num_epochs):
         if jax.process_count() > 1:
             train_loader.sampler.set_epoch(epoch)
         log_for_0("epoch {}...".format(epoch))
         
-        # training
-        train_metrics = MyMetrics(reduction="last")
+        # # training
+        # train_metrics = MyMetrics(reduction="last")
         for n_batch, batch in enumerate(train_loader):
             batch = prepare_batch_data(batch, config)
-            state, metrics, vis = p_train_step(state, batch)
-            train_metrics.update(metrics)
+            # state, metrics, vis = p_train_step(state, batch)
+            # train_metrics.update(metrics)
 
-            if epoch == epoch_offset and n_batch == 0:
-                logging.info(
-                    "p_train_step compiled in {}s".format(timer.elapse_with_reset())
-                )
-                logging.info("Initial compilation completed. Reset timer.")
+            images = p_sample_step(
+                params={"params": state.params, "batch_stats": {}},
+                sample_idx=vis_sample_idx,
+                images=batch["image"],
+            )
+            images = images[0]  # images have been all gathered
+            jax.random.normal(random.key(0), ()).block_until_ready()
+            samples_all.append(images)
 
-            step = epoch * steps_per_epoch + n_batch
-            ep = epoch + n_batch / steps_per_epoch
-            if training_config.get("log_per_step"):
-                if (step + 1) % training_config.log_per_step == 0:
-                    # compute and log metrics
-                    summary = train_metrics.compute_and_reset()
-                    summary["steps_per_second"] = training_config.log_per_step / timer.elapse_with_reset()
-                    summary.update({"ep": ep, "step": step})
-                    logger.log_dict(step + 1, summary)
+            if n_batch == 0: # visualize the first batch
+                vis = make_grid_visualization(images)
+                logger.log_image(0, {"vis_train": vis[0]})
 
-        # Show training visualization
-        if (epoch + 1) % training_config.visualize_per_epoch == 0:
-            vis = visualize_cifar_batch(vis)
-            logger.log_image(step + 1, {"vis_train": vis[0]})
 
-        # Show samples (eval)
-        if (epoch + 1) % training_config.eval_per_epoch == 0:
-            log_for_0("Sample epoch {}...".format(epoch))
-            vis = run_p_sample_step(p_sample_step, state, vis_sample_idx, ema=False)
-            vis = make_grid_visualization(vis)
-            logger.log_image(step + 1, {"vis_sample": vis[0]})
+            # if epoch == epoch_offset and n_batch == 0:
+            #     log_for_0(
+            #         "p_train_step compiled in {}s".format(timer.elapse_with_reset())
+            #     )
+            #     log_for_0("Initial compilation completed. Reset timer.")
 
-        # save checkpoint
-        if (
-            (epoch + 1) % training_config.checkpoint_per_epoch == 0
-            or epoch == training_config.num_epochs
-        ):
-            state = sync_batch_stats(state)
-            save_checkpoint(state, workdir)
+            # step = epoch * steps_per_epoch + n_batch
+            # ep = epoch + n_batch / steps_per_epoch
+            # if training_config.get("log_per_step"):
+            #     if (step + 1) % training_config.log_per_step == 0:
+            #         # compute and log metrics
+            #         summary = train_metrics.compute_and_reset()
+            #         summary["steps_per_second"] = training_config.log_per_step / timer.elapse_with_reset()
+            #         summary.update({"ep": ep, "step": step})
+            #         logger.log_dict(step + 1, summary)
 
-        if config.fid.on_use and (
-            (epoch + 1) % config.fid.fid_per_epoch == 0
-            or (epoch + 1) == training_config.num_epochs
-        ):
-            fid_score_ema = fid_evaluator(state)
-            # this FID can be used for saving the checkpoint with the best FID, i.e. "save_by_fid", which is not implemented yet
+        # # Show training visualization
+        # if (epoch + 1) % training_config.visualize_per_epoch == 0:
+        #     vis = visualize_cifar_batch(vis)
+        #     logger.log_image(step + 1, {"vis_train": vis[0]})
+
+        # # Show samples (eval)
+        # if (epoch + 1) % training_config.eval_per_epoch == 0:
+        #     log_for_0("Sample epoch {}...".format(epoch))
+        #     vis = run_p_sample_step(p_sample_step, state, vis_sample_idx, ema=False)
+        #     vis = make_grid_visualization(vis)
+        #     logger.log_image(step + 1, {"vis_sample": vis[0]})
+
+        # # save checkpoint
+        # if (
+        #     (epoch + 1) % training_config.checkpoint_per_epoch == 0
+        #     or epoch == training_config.num_epochs
+        # ):
+        #     state = sync_batch_stats(state)
+        #     save_checkpoint(state, workdir)
+
+        # if config.fid.on_use and (
+        #     (epoch + 1) % config.fid.fid_per_epoch == 0
+        #     or (epoch + 1) == training_config.num_epochs
+        # ):
+        #     fid_score_ema = fid_evaluator(state)
+        #     # this FID can be used for saving the checkpoint with the best FID, i.e. "save_by_fid", which is not implemented yet
+
+        break
+
+    # here we have done one epoch over the dataset
+    # eval fid
+    mu, sigma = fid_util.compute_jax_fid(samples_all, inception_net)
+    fid_score = fid_util.compute_fid(mu, stats_ref["mu"], sigma, stats_ref["sigma"])
+    log_for_0(f' w/ ema: FID at {samples_all.shape[0]} samples: {fid_score}')
 
     # Wait until computations are done before exiting
     jax.random.normal(jax.random.key(0), ()).block_until_ready()
