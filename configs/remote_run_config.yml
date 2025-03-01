@@ -13,7 +13,7 @@ training:
     # wandb: False # use this to disable wandb
 model:
     dropout: 0.15
-    n_T: 100 # 100 FM Euler steps
+    n_T: 10 # 100 FM Euler steps
     t_cond_method: "log999" # option: ["log999", "not"]
     # t_cond_method: "not" # option: ["log999", "not"]
     embedding_type: "positional"

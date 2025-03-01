@@ -472,6 +472,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
                 images=batch["image"],
             )
             images = images[0]  # images have been all gathered
+            gt = gt[0]  # images have been all gathered
             jax.random.normal(random.key(0), ()).block_until_ready()
 
             if n_batch == 0: # visualize the first batch
