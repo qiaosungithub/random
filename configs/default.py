@@ -99,10 +99,9 @@ def get_config():
     training.steps_per_eval = -1
     training.half_precision = False
     training.seed = 0  # init random seed
-    training.wandb = True
     
     # others
-    # config.wandb = True
+    config.wandb = True
     config.load_from = ""
     config.pretrain = ""
     config.just_evaluate = False

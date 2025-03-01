@@ -390,9 +390,9 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
     ######################################################################
     #                     Prepare for Training Loop                      #
     ######################################################################
-    ema_scales_fn = functools.partial(
-        edm_ema_scales_schedules, steps_per_epoch=steps_per_epoch, config=config
-    )
+    # ema_scales_fn = functools.partial(
+    #     edm_ema_scales_schedules, steps_per_epoch=steps_per_epoch, config=config
+    # )
     # p_train_step = jax.pmap(
     #     functools.partial(
     #         train_step,
@@ -417,11 +417,13 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
     # compile p_sample_step
     log_for_0("Compiling p_sample_step...")
     B = config.training.batch_size
+    B1 = jax.local_device_count()
+    B2 = B // jax.device_count()
     timer = Timer()
     lowered = p_sample_step.lower(
         params={"params": state.params, "batch_stats": {}},
         sample_idx=vis_sample_idx,
-        images=jnp.zeros((B, 32, 32, 3), jnp.float32),
+        images=jnp.zeros((B1, B2, 32, 32, 3), jnp.float32),
     )
     p_sample_step = lowered.compile()
     log_for_0("p_sample_step compiled in {}s".format(timer.elapse_with_reset()))
@@ -447,7 +449,8 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
     ######################################################################
     timer.reset()
     samples_all = []
-    for epoch in range(epoch_offset, training_config.num_epochs):
+    # print(training_config.num_epochs)
+    for epoch in range(0, training_config.num_epochs):
         if jax.process_count() > 1:
             train_loader.sampler.set_epoch(epoch)
         log_for_0("epoch {}...".format(epoch))
@@ -519,6 +522,8 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
         break
 
     # here we have done one epoch over the dataset
+    samples_all = jnp.concatenate(samples_all, axis=0)
+    print(f"Samples shape: {samples_all.shape}")
     # eval fid
     mu, sigma = fid_util.compute_jax_fid(samples_all, inception_net)
     fid_score = fid_util.compute_fid(mu, stats_ref["mu"], sigma, stats_ref["sigma"])
