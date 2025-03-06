@@ -186,6 +186,7 @@ class SimDDPM(nn.Module):
     use_aug_label: bool = False
     t_cond_method: str = "log999"
     embedding_type: str = "fourier"
+    sampler: str = "euler"
 
     def setup(self):
 
@@ -244,14 +245,48 @@ class SimDDPM(nn.Module):
         dict_losses = {"loss_rec": loss_rec, "loss_train": loss_train}
         return loss_train, dict_losses
 
-    def sample_one_step(self, x_i, rng, i, t_steps):
+    def sample_one_step(self, *args, **kwargs):
+        if self.sampler == 'euler':
+            x_next = self.sample_one_step_euler(*args, **kwargs)
+        elif self.sampler == 'heun':
+            x_next = self.sample_one_step_heun(*args, **kwargs)
+        else:
+            raise NotImplementedError
+
+        return x_next
+
+    def sample_one_step_euler(self, x_i, rng, i, t_steps):
 
         x_cur = x_i
         t_cur = t_steps[i].repeat(x_cur.shape[0])
         t_next = t_steps[i + 1].repeat(x_cur.shape[0])
         
-        net_call = self.net(x_cur, self.t_conder(t_cur),  augment_label=None, train=False)
+        net_call = self.net(x_cur, self.t_conder(t_cur), augment_label=None, train=False)
         x_next = x_cur + batch_mul(net_call, t_next - t_cur)
+
+        return x_next
+
+    def sample_one_step_heun(self, x_i, rng, i, t_steps):
+
+        x_cur = x_i
+
+        t_cur = t_steps[i].repeat(x_cur.shape[0])
+        t_next = t_steps[i + 1].repeat(x_cur.shape[0])
+
+        t_hat = t_cur
+        x_hat = x_cur  # x_hat is always x_cur when gamma=0
+
+        # Euler step.
+        u_pred = self.net(x_hat, self.t_conder(t_hat), augment_label=None, train=False)
+        d_cur = u_pred
+        x_next = x_hat + batch_mul(u_pred, t_next - t_hat)
+
+        # Apply 2nd order correction
+        u_pred = self.net(x_next, self.t_conder(t_next), augment_label=None, train=False)
+        d_prime = u_pred
+        x_next_ = x_hat + batch_mul(0.5 * d_cur + 0.5 * d_prime, t_next - t_hat)
+
+        x_next = jnp.where(i < self.n_T - 1, x_next_, x_next)
 
         return x_next
 
