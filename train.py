@@ -330,7 +330,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
     log_for_0(config)
     training_config = config.training
     if jax.process_index() == 0 and config.wandb:
-        wandb.init(project="sqa_random", dir=workdir, tags=["half_fid"])
+        wandb.init(project="sqa_random", dir=workdir, tags=["half_fid"], name=config.wandb_name)
         wandb.config.update(config.to_dict())
         ka = re.search(r"kmh-tpuvm-v[234]-(\d+)(-preemptible)?-(\d+)", workdir).group()
         wandb.config.update({"ka": ka})
@@ -353,7 +353,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
     ######################################################################
     #                           Create Dataloaders                       #
     ######################################################################
-    config.dataset.use_flip = not config.aug.use_edm_aug
+    # config.dataset.use_flip = not config.aug.use_edm_aug
     train_loader, steps_per_epoch = input_pipeline.create_split(
         config.dataset,
         local_batch_size,
@@ -477,6 +477,10 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str) -> Train
             images = images[0]  # images have been all gathered
             gt = gt[0]  # images have been all gathered
             jax.random.normal(random.key(0), ()).block_until_ready()
+
+            if config.scale != 1.0:
+                assert config.start == 1.0
+                images = images * config.scale
 
             if n_batch == 0: # visualize the first batch
                 vis = make_grid_visualization(images)

@@ -62,12 +62,20 @@ def main(argv):
     logging.info("JAX process: %d / %d", jax.process_index(), jax.process_count())
     logging.info("JAX local devices: %r", jax.local_devices())
 
-    if FLAGS.debug:
-        with jax.disable_jit():
-            train.train_and_evaluate(FLAGS.config, FLAGS.workdir)
-    else:
-        train.train_and_evaluate(FLAGS.config, FLAGS.workdir)
+    c = FLAGS.config
 
+    def f():
+        if FLAGS.debug:
+            with jax.disable_jit():
+                train.train_and_evaluate(FLAGS.config, FLAGS.workdir)
+        else:
+            train.train_and_evaluate(FLAGS.config, FLAGS.workdir)
+
+    # do the scale operations
+    for scale in [0.9, 1.0, 1.1]:
+        c.scale = scale
+        c.wandb_name = f"sqa_scale_{scale}"
+        f()
 
 if __name__ == "__main__":
     flags.mark_flags_as_required(["workdir", "mode", "config"])
