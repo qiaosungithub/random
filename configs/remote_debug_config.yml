@@ -17,13 +17,14 @@ model:
     t_cond_method: "log999" # option: ["log999", "not"]
     # t_cond_method: "not" # option: ["log999", "not"]
     embedding_type: "positional"
-    # sampler: euler
-    sampler: heun
+    sampler: euler
+    # sampler: heun
 fid:
     fid_per_epoch: 100
     num_samples: 50000
 dataset:
     num_workers: 64 # NOTE: On V2, if you don't use num_workers=64, sometimes the code will exit unexpectedly
+    use_flip: False
 
 start: 1.0
 scale: 1.0

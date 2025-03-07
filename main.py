@@ -71,10 +71,29 @@ def main(argv):
         else:
             train.train_and_evaluate(FLAGS.config, FLAGS.workdir)
 
-    # do the scale operations
-    for scale in [0.9, 1.0, 1.1]:
-        c.scale = scale
-        c.wandb_name = f"sqa_scale_{scale}"
+    for n in [10, 50, 100]:
+        c.model.n_T = n
+        c.start = 0.5
+        c.wandb_name = f"sqa_start_0.5_{n}_steps_euler"
+        f()
+
+    for n in [10, 50, 100]:
+        c.model.n_T = n
+        c.start = 0.8
+        c.wandb_name = f"sqa_start_0.8_{n}_steps_euler"
+        f()
+
+    for n in [0, 1, 2, 5]:
+        c.model.n_T = n
+        c.start = 0.99
+        c.wandb_name = f"sqa_start_0.99_{n}_steps_euler"
+        f()
+    
+    c.model.sampler = "heun"
+    for n in [2, 5]:
+        c.model.n_T = n
+        c.start = 0.99
+        c.wandb_name = f"sqa_start_0.99_{n}_steps_heun"
         f()
 
 if __name__ == "__main__":
