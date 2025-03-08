@@ -71,30 +71,43 @@ def main(argv):
         else:
             train.train_and_evaluate(FLAGS.config, FLAGS.workdir)
 
-    for n in [10, 50, 100]:
-        c.model.n_T = n
-        c.start = 0.5
-        c.wandb_name = f"sqa_start_0.5_{n}_steps_euler"
-        f()
+    # for n in [10, 50, 100]:
+    #     c.model.n_T = n
+    #     c.start = 0.5
+    #     c.wandb_name = f"sqa_start_0.5_{n}_steps_euler"
+    #     f()
 
-    for n in [10, 50, 100]:
-        c.model.n_T = n
-        c.start = 0.8
-        c.wandb_name = f"sqa_start_0.8_{n}_steps_euler"
-        f()
+    # for n in [10, 50, 100]:
+    #     c.model.n_T = n
+    #     c.start = 0.8
+    #     c.wandb_name = f"sqa_start_0.8_{n}_steps_euler"
+    #     f()
 
-    for n in [0, 1, 2, 5]:
-        c.model.n_T = n
-        c.start = 0.99
-        c.wandb_name = f"sqa_start_0.99_{n}_steps_euler"
+    # for n in [0, 1, 2, 5]:
+    #     c.model.n_T = n
+    #     c.start = 0.99
+    #     c.wandb_name = f"sqa_start_0.99_{n}_steps_euler"
+    #     f()
+
+    # for start in [0.99]:
+    #     c.model.n_T = 0
+    #     c.start = start
+    #     c.wandb_name = f"sqa_start_{start}_0_step"
+    #     f()
+
+    for scale in [0.5, 0.8, 1.2, 1.5]:
+        c.model.n_T == 0
+        c.start = 1.00
+        c.scale = scale
+        c.wandb_name = f"sqa_scale_{scale}"
         f()
     
-    c.model.sampler = "heun"
-    for n in [2, 5]:
-        c.model.n_T = n
-        c.start = 0.99
-        c.wandb_name = f"sqa_start_0.99_{n}_steps_heun"
-        f()
+    # c.model.sampler = "heun"
+    # for n in [2, 5]:
+    #     c.model.n_T = n
+    #     c.start = 0.99
+    #     c.wandb_name = f"sqa_start_0.99_{n}_steps_heun"
+    #     f()
 
 if __name__ == "__main__":
     flags.mark_flags_as_required(["workdir", "mode", "config"])

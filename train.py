@@ -250,10 +250,7 @@ def half_sample_step(params, sample_idx, model, rng_init, images, start=0.5):
     sample_idx: each random sampled image corrresponds to a seed
     """
     rng_sample = random.fold_in(rng_init, sample_idx)  # fold in sample_idx
-    if model.n_T == 0: 
-        samples = images
-    else:
-        samples = generate_from_noisy(params, model, rng_sample, images, start=start)
+    samples = generate_from_noisy(params, model, rng_sample, images, start=start)
     samples_all = lax.all_gather(samples, axis_name="batch")  # each device has a copy
     images_all = lax.all_gather(images, axis_name="batch")  # each device has a copy
     samples_all = samples_all.reshape(-1, *samples_all.shape[2:])

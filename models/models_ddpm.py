@@ -139,6 +139,9 @@ def generate_from_noisy(params, model, rng, images, start=0.5):
     t_batch = start * jnp.ones((B, ), dtype=model.dtype)
     x_i = batch_mul(images, t_batch) + batch_mul(noise, 1 - t_batch)
 
+    if model.n_T == 0:
+        return x_i
+
     # # initialize noise
     # x_shape = (n_sample, model.image_size, model.image_size, model.out_channels)
     # rng_used, rng = jax.random.split(rng, 2)
